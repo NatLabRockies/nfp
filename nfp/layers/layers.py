@@ -118,15 +118,23 @@ def batched_segment_op(
 
 
 class Gather(tf_layers.Layer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.supports_masking = True
+
     def call(self, inputs, mask=None, **kwargs):
         reference, indices = inputs
         return tf.gather(reference, indices, batch_dims=1)
+
+    def compute_mask(self, inputs, mask=None):
+        return None
 
 
 class Reduce(tf_layers.Layer):
     def __init__(self, reduction="sum", *args, **kwargs):
         super(Reduce, self).__init__(*args, **kwargs)
         self.reduction = reduction
+        self.supports_masking = True
 
     def compute_output_shape(self, input_shape):
         data_shape, _, target_shape = input_shape
@@ -142,6 +150,9 @@ class Reduce(tf_layers.Layer):
             data_mask=data_mask,
             reduction=self.reduction,
         )
+
+    def compute_mask(self, inputs, mask=None):
+        return None
 
     def get_config(self):
         return {"reduction": self.reduction}
@@ -174,7 +185,9 @@ class ConcatDense(tf_layers.Layer):
         self.dense2 = tf_layers.Dense(num_features)
 
     def call(self, inputs, mask=None, **kwargs):
-        output = self.concat(inputs)
+        # Use tf.concat instead of Keras Concatenate to avoid Keras 3's
+        # compute_mask creating an all-True mask when some inputs lack masks
+        output = tf.concat(inputs, axis=-1)
         output = self.dense1(output)
         output = self.dense2(output)
         return output
@@ -182,8 +195,12 @@ class ConcatDense(tf_layers.Layer):
     def compute_mask(self, inputs, mask=None):
         if mask is None:
             return None
-        else:
-            return tf.math.reduce_all(tf.stack(mask), axis=0)
+        valid_masks = [m for m in mask if m is not None]
+        if not valid_masks:
+            return None
+        if len(valid_masks) == 1:
+            return valid_masks[0]
+        return tf.math.reduce_all(tf.stack(valid_masks), axis=0)
 
 
 class Tile(tf_layers.Layer):

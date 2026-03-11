@@ -110,7 +110,7 @@ class NodeUpdate(GraphLayer):
         else:
             messages = self.concat([source_atom, bond_state, global_state])
 
-        if mask is not None:
+        if mask is not None and mask[1] is not None:
             # Only works for sum, max
             messages = tf.where(
                 tf.expand_dims(mask[1], axis=-1), messages, tf.zeros_like(messages)
@@ -142,7 +142,7 @@ class GlobalUpdate(GraphLayer):
         super().__init__(**kwargs)
         self.units = units  # H
         self.num_heads = num_heads  # N
-        self.supports_masking = False
+        self.supports_masking = True
 
     def build(self, input_shape):
         super().build(input_shape)
@@ -167,7 +167,7 @@ class GlobalUpdate(GraphLayer):
         graph_elements = tf.concat([atom_state, bond_state], axis=1)
         query = self.query_layer(graph_elements)  # [B,N,S,H]
 
-        if mask is not None:
+        if mask is not None and mask[0] is not None and mask[1] is not None:
             graph_element_mask = tf.concat([mask[0], mask[1]], axis=1)
             query = tf.where(
                 tf.expand_dims(graph_element_mask, axis=-1),
@@ -186,6 +186,13 @@ class GlobalUpdate(GraphLayer):
             context = self.dropout_layer(context)
 
         return context
+
+    def compute_output_shape(self, input_shape):
+        # input_shape[0] is atom_state: (batch, N_atoms, features)
+        return (input_shape[0][0], self.num_heads * self.units)
+
+    def compute_mask(self, inputs, mask=None):
+        return None  # 2D output has no sequence mask
 
     def get_config(self):
         config = super(GlobalUpdate, self).get_config()
