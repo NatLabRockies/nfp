@@ -8,8 +8,11 @@ class MissingDependencyException(RuntimeError):
 
 
 custom_objects = {
+    "RBFExpansion": RBFExpansion,
     "Gather": Gather,
     "Reduce": Reduce,
+    "ConcatDense": ConcatDense,
+    "Tile": Tile,
     "masked_mean_squared_error": masked_mean_squared_error,
     "masked_mean_absolute_error": masked_mean_absolute_error,
     "masked_log_cosh": masked_log_cosh,

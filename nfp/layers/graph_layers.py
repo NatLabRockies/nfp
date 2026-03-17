@@ -3,8 +3,10 @@ from nfp.frameworks import tf
 
 assert tf, "Tensorflow 2.x required for GraphLayers"
 tf_layers = tf.keras.layers
+register_keras_serializable = tf.keras.utils.register_keras_serializable
 
 
+@register_keras_serializable(package="nfp")
 class GraphLayer(tf_layers.Layer):
     """Base class for all GNN layers"""
 
@@ -28,9 +30,16 @@ class GraphLayer(tf_layers.Layer):
             self.dropout_layer = tf_layers.Dropout(self.dropout)
 
     def get_config(self):
-        return {"dropout": self.dropout}
+        config = super().get_config()
+        config.update({"dropout": self.dropout})
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 
+@register_keras_serializable(package="nfp")
 class EdgeUpdate(GraphLayer):
     def build(self, input_shape):
         """inputs = [atom_state, bond_state, connectivity]
@@ -40,6 +49,10 @@ class EdgeUpdate(GraphLayer):
 
         self.gather = nfp.Gather()
         self.concat = nfp.ConcatDense()
+        concat_shapes = [input_shape[1], input_shape[0], input_shape[0]]
+        if self.use_global:
+            concat_shapes.append((input_shape[1][0], input_shape[1][1], input_shape[3][-1]))
+        self.concat.build(concat_shapes)
 
     def call(self, inputs, mask=None, **kwargs):
         """Inputs: [atom_state, bond_state, connectivity]
@@ -77,7 +90,12 @@ class EdgeUpdate(GraphLayer):
         else:
             return None
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
+
+@register_keras_serializable(package="nfp")
 class NodeUpdate(GraphLayer):
     def build(self, input_shape):
         super().build(input_shape)
@@ -91,6 +109,12 @@ class NodeUpdate(GraphLayer):
 
         self.dense1 = tf_layers.Dense(2 * num_features, activation="relu")
         self.dense2 = tf_layers.Dense(num_features)
+        concat_shapes = [input_shape[0], input_shape[1]]
+        if self.use_global:
+            concat_shapes.append((input_shape[1][0], input_shape[1][1], input_shape[3][-1]))
+        self.concat.build(concat_shapes)
+        self.dense1.build((None, num_features))
+        self.dense2.build((None, 2 * num_features))
 
     def call(self, inputs, mask=None, **kwargs):
         """Inputs: [atom_state, bond_state, connectivity]
@@ -136,7 +160,12 @@ class NodeUpdate(GraphLayer):
         else:
             return None
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
+
+@register_keras_serializable(package="nfp")
 class GlobalUpdate(GraphLayer):
     def __init__(self, units, num_heads, **kwargs):
         super().__init__(**kwargs)
@@ -147,8 +176,11 @@ class GlobalUpdate(GraphLayer):
     def build(self, input_shape):
         super().build(input_shape)
         dense_units = self.units * self.num_heads  # N*H
+        num_features = input_shape[0][-1]
         self.query_layer = tf_layers.Dense(self.num_heads, name="query")
         self.value_layer = tf_layers.Dense(dense_units, name="value")
+        self.query_layer.build((None, num_features))
+        self.value_layer.build((None, num_features))
 
     def transpose_scores(self, input_tensor):
         input_shape = tf.shape(input_tensor)
@@ -198,3 +230,7 @@ class GlobalUpdate(GraphLayer):
         config = super(GlobalUpdate, self).get_config()
         config.update({"units": self.units, "num_heads": self.num_heads})
         return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
