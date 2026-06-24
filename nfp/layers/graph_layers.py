@@ -3,8 +3,10 @@ from nfp.frameworks import tf
 
 assert tf, "Tensorflow 2.x required for GraphLayers"
 tf_layers = tf.keras.layers
+register_keras_serializable = tf.keras.utils.register_keras_serializable
 
 
+@register_keras_serializable(package="nfp")
 class GraphLayer(tf_layers.Layer):
     """Base class for all GNN layers"""
 
@@ -28,9 +30,16 @@ class GraphLayer(tf_layers.Layer):
             self.dropout_layer = tf_layers.Dropout(self.dropout)
 
     def get_config(self):
-        return {"dropout": self.dropout}
+        config = super().get_config()
+        config.update({"dropout": self.dropout})
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 
+@register_keras_serializable(package="nfp")
 class EdgeUpdate(GraphLayer):
     def build(self, input_shape):
         """inputs = [atom_state, bond_state, connectivity]
@@ -40,6 +49,10 @@ class EdgeUpdate(GraphLayer):
 
         self.gather = nfp.Gather()
         self.concat = nfp.ConcatDense()
+        concat_shapes = [input_shape[1], input_shape[0], input_shape[0]]
+        if self.use_global:
+            concat_shapes.append((input_shape[1][0], input_shape[1][1], input_shape[3][-1]))
+        self.concat.build(concat_shapes)
 
     def call(self, inputs, mask=None, **kwargs):
         """Inputs: [atom_state, bond_state, connectivity]
@@ -77,7 +90,12 @@ class EdgeUpdate(GraphLayer):
         else:
             return None
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
+
+@register_keras_serializable(package="nfp")
 class NodeUpdate(GraphLayer):
     def build(self, input_shape):
         super().build(input_shape)
@@ -91,6 +109,12 @@ class NodeUpdate(GraphLayer):
 
         self.dense1 = tf_layers.Dense(2 * num_features, activation="relu")
         self.dense2 = tf_layers.Dense(num_features)
+        concat_shapes = [input_shape[0], input_shape[1]]
+        if self.use_global:
+            concat_shapes.append((input_shape[1][0], input_shape[1][1], input_shape[3][-1]))
+        self.concat.build(concat_shapes)
+        self.dense1.build((None, num_features))
+        self.dense2.build((None, 2 * num_features))
 
     def call(self, inputs, mask=None, **kwargs):
         """Inputs: [atom_state, bond_state, connectivity]
@@ -110,7 +134,7 @@ class NodeUpdate(GraphLayer):
         else:
             messages = self.concat([source_atom, bond_state, global_state])
 
-        if mask is not None:
+        if mask is not None and mask[1] is not None:
             # Only works for sum, max
             messages = tf.where(
                 tf.expand_dims(mask[1], axis=-1), messages, tf.zeros_like(messages)
@@ -136,19 +160,27 @@ class NodeUpdate(GraphLayer):
         else:
             return None
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
+
+@register_keras_serializable(package="nfp")
 class GlobalUpdate(GraphLayer):
     def __init__(self, units, num_heads, **kwargs):
         super().__init__(**kwargs)
         self.units = units  # H
         self.num_heads = num_heads  # N
-        self.supports_masking = False
+        self.supports_masking = True
 
     def build(self, input_shape):
         super().build(input_shape)
         dense_units = self.units * self.num_heads  # N*H
+        num_features = input_shape[0][-1]
         self.query_layer = tf_layers.Dense(self.num_heads, name="query")
         self.value_layer = tf_layers.Dense(dense_units, name="value")
+        self.query_layer.build((None, num_features))
+        self.value_layer.build((None, num_features))
 
     def transpose_scores(self, input_tensor):
         input_shape = tf.shape(input_tensor)
@@ -167,7 +199,7 @@ class GlobalUpdate(GraphLayer):
         graph_elements = tf.concat([atom_state, bond_state], axis=1)
         query = self.query_layer(graph_elements)  # [B,N,S,H]
 
-        if mask is not None:
+        if mask is not None and mask[0] is not None and mask[1] is not None:
             graph_element_mask = tf.concat([mask[0], mask[1]], axis=1)
             query = tf.where(
                 tf.expand_dims(graph_element_mask, axis=-1),
@@ -187,7 +219,18 @@ class GlobalUpdate(GraphLayer):
 
         return context
 
+    def compute_output_shape(self, input_shape):
+        # input_shape[0] is atom_state: (batch, N_atoms, features)
+        return (input_shape[0][0], self.num_heads * self.units)
+
+    def compute_mask(self, inputs, mask=None):
+        return None  # 2D output has no sequence mask
+
     def get_config(self):
         config = super(GlobalUpdate, self).get_config()
         config.update({"units": self.units, "num_heads": self.num_heads})
         return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)

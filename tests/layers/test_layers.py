@@ -23,7 +23,7 @@ layers = tf.keras.layers
 
 
 def test_gather():
-    in1 = layers.Input(shape=[None], dtype="float", name="data")
+    in1 = layers.Input(shape=[None], dtype="float32", name="data")
     in2 = layers.Input(shape=[None], dtype=tf.int64, name="indices")
 
     gather = nfp.Gather()([in1, in2])
@@ -73,7 +73,7 @@ def test_reduce(smiles_inputs, method):
 
 
 def test_tile():
-    state = layers.Input(shape=[None], dtype="float", name="data")
+    state = layers.Input(shape=[None], dtype="float32", name="data")
     target = layers.Input(shape=[None, 3], dtype=tf.int64, name="indices")
 
     tile = nfp.Tile()([state, target])

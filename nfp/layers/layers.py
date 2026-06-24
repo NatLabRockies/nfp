@@ -2,8 +2,10 @@ from nfp.frameworks import tf
 
 assert tf, "Tensorflow 2.x required for GraphLayers"
 tf_layers = tf.keras.layers
+register_keras_serializable = tf.keras.utils.register_keras_serializable
 
 
+@register_keras_serializable(package="nfp")
 class RBFExpansion(tf_layers.Layer):
     def __init__(
         self, dimension=128, init_gap=10, init_max_distance=7, trainable=False
@@ -55,12 +57,18 @@ class RBFExpansion(tf_layers.Layer):
         return tf.logical_not(tf.math.is_nan(inputs))
 
     def get_config(self):
-        return {
+        config = super().get_config()
+        config.update({
             "init_gap": self.init_gap,
             "init_max_distance": self.init_max_distance,
             "dimension": self.dimension,
             "trainable": self.trainable,
-        }
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 
 def batched_segment_op(
@@ -117,16 +125,33 @@ def batched_segment_op(
 #         return cls(**config)
 
 
+@register_keras_serializable(package="nfp")
 class Gather(tf_layers.Layer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.supports_masking = True
+
     def call(self, inputs, mask=None, **kwargs):
         reference, indices = inputs
         return tf.gather(reference, indices, batch_dims=1)
 
+    def compute_mask(self, inputs, mask=None):
+        return None
 
+    def get_config(self):
+        return super().get_config()
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
+
+@register_keras_serializable(package="nfp")
 class Reduce(tf_layers.Layer):
     def __init__(self, reduction="sum", *args, **kwargs):
         super(Reduce, self).__init__(*args, **kwargs)
         self.reduction = reduction
+        self.supports_masking = True
 
     def compute_output_shape(self, input_shape):
         data_shape, _, target_shape = input_shape
@@ -143,8 +168,17 @@ class Reduce(tf_layers.Layer):
             reduction=self.reduction,
         )
 
+    def compute_mask(self, inputs, mask=None):
+        return None
+
     def get_config(self):
-        return {"reduction": self.reduction}
+        config = super().get_config()
+        config.update({"reduction": self.reduction})
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
     @staticmethod
     def _parse_inputs_and_mask(inputs, mask=None):
@@ -159,6 +193,7 @@ class Reduce(tf_layers.Layer):
         return data, segment_ids, target, data_mask
 
 
+@register_keras_serializable(package="nfp")
 class ConcatDense(tf_layers.Layer):
     """Layer to combine the concatenation and two dense layers. Just useful as a common
     operation in the graph layers"""
@@ -169,12 +204,18 @@ class ConcatDense(tf_layers.Layer):
 
     def build(self, input_shape):
         num_features = input_shape[0][-1]
+        concat_features = sum(shape[-1] for shape in input_shape)
         self.concat = tf_layers.Concatenate()
         self.dense1 = tf_layers.Dense(2 * num_features, activation="relu")
         self.dense2 = tf_layers.Dense(num_features)
+        self.dense1.build((None, concat_features))
+        self.dense2.build((None, 2 * num_features))
+        super().build(input_shape)
 
     def call(self, inputs, mask=None, **kwargs):
-        output = self.concat(inputs)
+        # Use tf.concat instead of Keras Concatenate to avoid Keras 3's
+        # compute_mask creating an all-True mask when some inputs lack masks
+        output = tf.concat(inputs, axis=-1)
         output = self.dense1(output)
         output = self.dense2(output)
         return output
@@ -182,10 +223,22 @@ class ConcatDense(tf_layers.Layer):
     def compute_mask(self, inputs, mask=None):
         if mask is None:
             return None
-        else:
-            return tf.math.reduce_all(tf.stack(mask), axis=0)
+        valid_masks = [m for m in mask if m is not None]
+        if not valid_masks:
+            return None
+        if len(valid_masks) == 1:
+            return valid_masks[0]
+        return tf.math.reduce_all(tf.stack(valid_masks), axis=0)
+
+    def get_config(self):
+        return super().get_config()
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 
+@register_keras_serializable(package="nfp")
 class Tile(tf_layers.Layer):
     def __init__(self, **kwargs):
         super(Tile, self).__init__(**kwargs)
@@ -202,3 +255,10 @@ class Tile(tf_layers.Layer):
             return None
         else:
             return mask[1]
+
+    def get_config(self):
+        return super().get_config()
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
