@@ -54,7 +54,9 @@ class RBFExpansion(tf_layers.Layer):
         return tf.exp(logits)
 
     def compute_mask(self, inputs, mask=None):
-        return tf.logical_not(tf.math.is_nan(inputs))
+        # Use keras.ops so this also works on symbolic KerasTensors (Keras 3)
+        ops = tf.keras.ops
+        return ops.logical_not(ops.isnan(inputs))
 
     def get_config(self):
         config = super().get_config()

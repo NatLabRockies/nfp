@@ -41,10 +41,12 @@ def test_save_and_load_message(
     output_pad = model(inputs_with_padding)
     assert np.all(np.isclose(outputs, output_pad, atol=1e-4, rtol=1e-4))
 
-    model.save(tmpdir, include_optimizer=False)
-    _ = tf.keras.models.load_model(tmpdir, compile=False)
-    loutputs = model(inputs_no_padding)
-    loutput_pad = model(inputs_with_padding)
+    # Keras 3 requires the native .keras extension when saving
+    model_path = str(tmpdir / "model.keras")
+    model.save(model_path, include_optimizer=False)
+    loaded_model = tf.keras.models.load_model(model_path, compile=False)
+    loutputs = loaded_model(inputs_no_padding)
+    loutput_pad = loaded_model(inputs_with_padding)
 
     assert np.all(np.isclose(outputs, loutputs, atol=1e-4, rtol=1e-3))
     assert np.all(np.isclose(output_pad, loutput_pad, atol=1e-4, rtol=1e-3))
